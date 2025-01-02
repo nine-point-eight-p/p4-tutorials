@@ -52,7 +52,19 @@ parser MyParser(packet_in packet,
                 inout standard_metadata_t standard_metadata) {
 
     state start {
-        /* TODO: add parser logic */
+        transition parse_ethernet;
+    }
+
+    state parse_ethernet {
+        packet.extract(hdr.ethernet);
+        transition select(hdr.ethernet.etherType) {
+            TYPE_IPV4: parse_ipv4;
+            default: accept;
+        }
+    }
+
+    state parse_ipv4 {
+        packet.extract(hdr.ipv4);
         transition accept;
     }
 }
@@ -79,19 +91,10 @@ control MyIngress(inout headers hdr,
     }
 
     action ipv4_forward(macAddr_t dstAddr, egressSpec_t port) {
-        /*
-            Action function for forwarding IPv4 packets.
-
-            This function is responsible for forwarding IPv4 packets to the specified
-            destination MAC address and egress port.
-
-            Parameters:
-            - dstAddr: Destination MAC address of the packet.
-            - port: Egress port where the packet should be forwarded.
-
-            TODO: Implement the logic for forwarding the IPv4 packet based on the
-            destination MAC address and egress port.
-        */
+        standard_metadata.egress_spec = port;
+        hdr.ethernet.srcAddr = hdr.ethernet.dstAddr;
+        hdr.ethernet.dstAddr = dstAddr;
+        hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
     }
 
     table ipv4_lpm {
@@ -108,10 +111,9 @@ control MyIngress(inout headers hdr,
     }
 
     apply {
-        /* TODO: fix ingress control logic
-         *  - ipv4_lpm should be applied only when IPv4 header is valid
-         */
-        ipv4_lpm.apply();
+        if (hdr.ipv4.isValid()) {
+            ipv4_lpm.apply();
+        }
     }
 }
 
@@ -156,19 +158,8 @@ control MyComputeChecksum(inout headers hdr, inout metadata meta) {
 
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
-        /*
-        Control function for deparser.
-
-        This function is responsible for constructing the output packet by appending
-        headers to it based on the input headers.
-
-        Parameters:
-        - packet: Output packet to be constructed.
-        - hdr: Input headers to be added to the output packet.
-
-        TODO: Implement the logic for constructing the output packet by appending
-        headers based on the input headers.
-        */
+        packet.emit(hdr.ethernet);
+        packet.emit(hdr.ipv4);
     }
 }
 

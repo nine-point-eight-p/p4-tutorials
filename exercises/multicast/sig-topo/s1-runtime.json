@@ -42,6 +42,14 @@
       "action_params": {
         "port": 4
       }
+    },
+    {
+      "table": "MyIngress.mac_lookup",
+      "match": {
+        "hdr.ethernet.dstAddr": "ff:ff:ff:ff:ff:ff"
+      },
+      "action_name": "MyIngress.multicast",
+      "action_params": {}
     }
   ],
   "multicast_group_entries": [
@@ -58,6 +66,10 @@
         },
         {
           "egress_port": 3,
+          "instance": 1
+        },
+        {
+          "egress_port": 4,
           "instance": 1
         }
       ]

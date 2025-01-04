@@ -123,8 +123,8 @@ control MyIngress(inout headers hdr,
 
     register<bit<BLOOM_FILTER_BIT_WIDTH>>(BLOOM_FILTER_ENTRIES) bloom_filter_1;
     register<bit<BLOOM_FILTER_BIT_WIDTH>>(BLOOM_FILTER_ENTRIES) bloom_filter_2;
-    bit<32> reg_pos_one; bit<32> reg_pos_two;
-    bit<1> reg_val_one; bit<1> reg_val_two;
+    bit<32> reg_pos_1; bit<32> reg_pos_2;
+    bit<1> reg_val_1; bit<1> reg_val_2;
     bit<1> direction;
 
     action drop() {
@@ -133,19 +133,37 @@ control MyIngress(inout headers hdr,
 
     action compute_hashes(ip4Addr_t ipAddr1, ip4Addr_t ipAddr2, bit<16> port1, bit<16> port2){
        //Get register position
-       hash(reg_pos_one, HashAlgorithm.crc16, (bit<32>)0, {ipAddr1,
+       hash(reg_pos_1, HashAlgorithm.crc16, (bit<32>)0, {ipAddr1,
                                                            ipAddr2,
                                                            port1,
                                                            port2,
                                                            hdr.ipv4.protocol},
                                                            (bit<32>)BLOOM_FILTER_ENTRIES);
 
-       hash(reg_pos_two, HashAlgorithm.crc32, (bit<32>)0, {ipAddr1,
+       hash(reg_pos_2, HashAlgorithm.crc32, (bit<32>)0, {ipAddr1,
                                                            ipAddr2,
                                                            port1,
                                                            port2,
                                                            hdr.ipv4.protocol},
                                                            (bit<32>)BLOOM_FILTER_ENTRIES);
+    }
+
+    // Set for packets from internal network
+    action set_filter() {
+        compute_hashes(hdr.ipv4.srcAddr, hdr.ipv4.dstAddr, hdr.tcp.srcPort, hdr.tcp.dstPort);
+        bloom_filter_1.write(reg_pos_1, 1);
+        bloom_filter_2.write(reg_pos_2, 1);
+    }
+
+    // Test for packets from outside
+    action test_filter() {
+        compute_hashes(hdr.ipv4.dstAddr, hdr.ipv4.srcAddr, hdr.tcp.dstPort, hdr.tcp.srcPort);
+        bloom_filter_1.read(reg_val_1, reg_pos_1);
+        bloom_filter_2.read(reg_val_2, reg_pos_2);
+        // Drop packets if there's no connection from internal network
+        if (!(reg_val_1 == 1 && reg_val_2 == 1)) {
+            drop();
+        }
     }
 
     action ipv4_forward(macAddr_t dstAddr, egressSpec_t port) {
@@ -189,28 +207,22 @@ control MyIngress(inout headers hdr,
         if (hdr.ipv4.isValid()){
             ipv4_lpm.apply();
             if (hdr.tcp.isValid()){
-                direction = 0; // default
+                // Packets from internal network to internal network,
+                // or from outside to outside, will not hit in check_ports
                 if (check_ports.apply().hit) {
-                    // test and set the bloom filter
                     if (direction == 0) {
-                        compute_hashes(hdr.ipv4.srcAddr, hdr.ipv4.dstAddr, hdr.tcp.srcPort, hdr.tcp.dstPort);
-                    }
-                    else {
-                        compute_hashes(hdr.ipv4.dstAddr, hdr.ipv4.srcAddr, hdr.tcp.dstPort, hdr.tcp.srcPort);
-                    }
-                    // Packet comes from internal network
-                    if (direction == 0){
-                        // TODO: this packet is part of an outgoing TCP connection.
-                        //   We need to set the bloom filter if this is a SYN packet
-                        //   E.g. bloom_filter_1.write(<index>, <value>);
-                    }
-                    // Packet comes from outside
-                    else if (direction == 1){
-                        // TODO: this packet is part of an incomming TCP connection.
-                        //   We need to check if this packet is allowed to pass by reading the bloom filter
-                        //   E.g. bloom_filter_1.read(<value>, <index>);
+                        // Packet comes from internal network
+                        set_filter();
+                    } else {
+                        // Packet comes from outside
+                        test_filter();
                     }
                 }
+                // NOTE: The filter is not cleared when TCP connection ends,
+                // so it is possible to reestablish connection from outside
+                // using the same ports.
+                // TODO: Consider how to handle FIN packets (see `Food for
+                // thought` in README.md).
             }
         }
     }

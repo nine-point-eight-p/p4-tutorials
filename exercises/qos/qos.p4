@@ -21,6 +21,46 @@ const bit<8> IP_PROTOCOLS_PIM        = 103;
 const bit<8> IP_PROTOCOLS_VRRP       = 112;
 
 
+
+enum AFClass_t {
+    C1,
+    C2,
+    C3,
+    C4
+};
+
+action deserialize_af_class(out bit<3> output, AFClass_t class) {
+    if (class == AFClass_t.C1) {
+        output = 1;
+    } else if (class == AFClass_t.C2) {
+        output = 2;
+    } else if (class == AFClass_t.C3) {
+        output = 3;
+    } else if (class == AFClass_t.C4) {
+        output = 4;
+    } else {
+        output = 0;
+    }
+}
+
+enum AFDropProb_t {
+    Low,
+    Medium,
+    High,
+};
+
+action deserialize_af_drop_prob(out bit<2> output, AFDropProb_t drop_prob) {
+    if (drop_prob == AFDropProb_t.Low) {
+        output = 1;
+    } else if (drop_prob == AFDropProb_t.Medium) {
+        output = 2;
+    } else if (drop_prob == AFDropProb_t.High) {
+        output = 3;
+    } else {
+        output = 0;
+    }
+}
+
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
 *************************************************************************/
@@ -35,13 +75,11 @@ header ethernet_t {
     bit<16>   etherType;
 }
 
-/*
- * TODO: split tos to two fields 6 bit diffserv and 2 bit ecn
- */
 header ipv4_t {
     bit<4>    version;
     bit<4>    ihl;
-    bit<8>    tos;
+    bit<6>    diffserv;
+    bit<2>    ecn;
     bit<16>   totalLen;
     bit<16>   identification;
     bit<3>    flags;
@@ -117,8 +155,25 @@ control MyIngress(inout headers hdr,
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
     }
 
-/* TODO: Implement actions for different traffic classes */
+    // Ref: https://en.wikipedia.org/wiki/Differentiated_services#Classification_and_marking
 
+    action default_forwarding() {
+        hdr.ipv4.diffserv = 0;
+    }
+
+    action expedited_forwarding() {
+        hdr.ipv4.diffserv = 46;
+    }
+
+    action voice_admit() {
+        hdr.ipv4.diffserv = 44;
+    }
+
+    action assured_forwarding(AFClass_t class, AFDropProb_t drop_prob) {
+        hdr.ipv4.diffserv = 0;
+        deserialize_af_class(hdr.ipv4.diffserv[5:3], class);
+        deserialize_af_drop_prob(hdr.ipv4.diffserv[2:1], drop_prob);
+    }
 
     table ipv4_lpm {
         key = {
@@ -133,9 +188,15 @@ control MyIngress(inout headers hdr,
         default_action = NoAction();
     }
 
-/* TODO: set hdr.ipv4.diffserv on the basis of protocol */
     apply {
         if (hdr.ipv4.isValid()) {
+            if (hdr.ipv4.protocol == IP_PROTOCOLS_UDP) {
+                expedited_forwarding();
+            } else if (hdr.ipv4.protocol == IP_PROTOCOLS_TCP) {
+                voice_admit();
+            } else {
+                default_forwarding();
+            }
             ipv4_lpm.apply();
         }
     }
@@ -158,12 +219,12 @@ control MyEgress(inout headers hdr,
 
 control MyComputeChecksum(inout headers hdr, inout metadata meta) {
     apply {
-        /* TODO: replace tos with diffserv and ecn */
         update_checksum(
             hdr.ipv4.isValid(),
             { hdr.ipv4.version,
               hdr.ipv4.ihl,
-              hdr.ipv4.tos,
+              hdr.ipv4.diffserv,
+              hdr.ipv4.ecn,
               hdr.ipv4.totalLen,
               hdr.ipv4.identification,
               hdr.ipv4.flags,

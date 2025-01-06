@@ -107,6 +107,7 @@ parser MyParser(packet_in packet,
 
     state parse_probe {
         packet.extract(hdr.probe);
+        // proceed hop_cnt + 1 times to get current forwarding entry
         meta.parser_metadata.remaining = hdr.probe.hop_cnt + 1;
         transition select(hdr.probe.hop_cnt) {
             0: parse_probe_fwd;
@@ -178,8 +179,7 @@ control MyIngress(inout headers hdr,
     apply {
         if (hdr.ipv4.isValid()) {
             ipv4_lpm.apply();
-        }
-        else if (hdr.probe.isValid()) {
+        } else if (hdr.probe.isValid()) {
             standard_metadata.egress_spec = (bit<9>)meta.egress_spec;
             hdr.probe.hop_cnt = hdr.probe.hop_cnt + 1;
         }
@@ -227,22 +227,17 @@ control MyEgress(inout headers hdr,
             // fill out probe fields
             hdr.probe_data.push_front(1);
             hdr.probe_data[0].setValid();
-            if (hdr.probe.hop_cnt == 1) {
-                hdr.probe_data[0].bos = 1;
-            }
-            else {
-                hdr.probe_data[0].bos = 0;
-            }
+            hdr.probe_data[0].bos = (hdr.probe.hop_cnt == 1) ? 1w1 : 0;
             // set switch ID field
             swid.apply();
-            // TODO: fill out the rest of the probe packet fields
-            // hdr.probe_data[0].port = ...
-            // hdr.probe_data[0].byte_cnt = ...
-            // TODO: read / update the last_time_reg
-            // last_time_reg.read(<val>, <index>);
-            // last_time_reg.write(<index>, <val>);
-            // hdr.probe_data[0].last_time = ...
-            // hdr.probe_data[0].cur_time = ...
+            // fill out the rest of the probe packet fields
+            hdr.probe_data[0].port = (bit<8>)standard_metadata.egress_port;
+            hdr.probe_data[0].byte_cnt = byte_cnt;
+            // read / update the last_time_reg
+            last_time_reg.read(last_time, (bit<32>)standard_metadata.egress_port);
+            last_time_reg.write((bit<32>)standard_metadata.egress_port, cur_time);
+            hdr.probe_data[0].last_time = last_time;
+            hdr.probe_data[0].cur_time = cur_time;
         }
     }
 }

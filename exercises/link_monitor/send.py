@@ -4,6 +4,7 @@ import time
 
 from probe_hdrs import *
 
+socket = conf.L2socket(iface='eth0')
 
 def main():
 
@@ -18,11 +19,12 @@ def main():
                 ProbeFwd(egress_spec=3) / \
                 ProbeFwd(egress_spec=2) / \
                 ProbeFwd(egress_spec=1)
+    probe_pkt = bytes(probe_pkt)
 
     while True:
         try:
-            sendp(probe_pkt, iface='eth0')
-            time.sleep(1)
+            socket.send(probe_pkt)
+            time.sleep(1 / 1_000_000) # 1 us
         except KeyboardInterrupt:
             sys.exit()
 
